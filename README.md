@@ -1,55 +1,56 @@
-# Combinational Hardware Sorting Network (Bitonic Sort)
+# Parameterized & Pipelined Hardware Sorting Network (Bitonic Sort)
 
 ## 📌 Overview
-This repository contains the SystemVerilog implementation of a **4-Input Combinational Sorting Network**. A combinational hardware sorting network is a specialized digital circuit designed to sort a fixed number of inputs into a specific order (ascending or descending) purely through combinational logic.
+This repository contains a fully **parameterized and pipelined SystemVerilog implementation** of a Bitonic Sorting Network. 
 
-Unlike software sorting algorithms that rely on a CPU, loops, and conditional branching, a sorting network processes data simultaneously through hardwired, fixed paths. Because there are no clocks, registers, or memory elements involved in the sorting logic itself, the data simply flows from input pins to the output pins in a single propagation delay. 
+Unlike a purely combinational approach, this V2.0 architecture utilizes synchronous pipeline registers between sorting stages to achieve higher throughput, shorter critical paths, and better timing closure. Built with dynamic `generate` blocks and `$clog2` logic, the RTL automatically scales to instantiate the required hardware for any power-of-two inputs.
+
+### 🚀 What's New in V2.0
+* **Full Parameterization:** The network dynamically scales using `NUM_INPUTS` and `DATA_WIDTH` top-level parameters.
+* **Synchronous Pipelining:** `always_ff` registers isolate every comparison stage, allowing the network to process a new set of data every single clock cycle after the initial latency.
+* **Verified Scalability:** The default repository simulation demonstrates a 4-input, 32-bit configuration operating with a verified 3-clock-cycle latency.
 
 ## 📂 Repository Contents
-* **`design.sv`**: The main SystemVerilog design file containing the structural and dataflow modeling of the network. It consists of:
-  * `sorting_network`: The top-level module that routes the inputs through a 3-stage pipeline of comparator units to produce a fully sorted output.
-  * `cas_unit`: The foundational Compare-and-Swap (CAS) unit.
-* **`testbench.sv`**: The testbench file used to apply random and edge-case 4-bit vectors to verify the sorting logic.
-* **`waveform.pdf`**: The exported simulation waveform that visually verifies the correct concurrent sorting operation, displaying the unsorted inputs alongside the sorted outputs (`out0` to `out3`).
+* **`design.sv`**: The main SystemVerilog design file. It consists of:
+  * `sorting_network`: The top-level parameterized module that uses nested `generate` loops to automatically wire Compare-and-Swap (CAS) units and pipeline registers based on the requested `NUM_INPUTS`.
+  * `cas_unit`: The foundational purely combinational Compare-and-Swap logic block.
+* **`testbench.sv`**: A clock-driven testbench that applies test vectors to the network, accounts for pipeline latency, and verifies the sorted 32-bit outputs.
+* **`waveform.pdf` & `result.pdf`**: Exported simulation waveforms and logs verifying the concurrent sorting operation and the exact 3-cycle propagation delay from `in` to `out`.
 
 ## 🧠 Theoretical Characteristics
-* **Data-independent control flow:** The sequence of comparisons is exactly the same regardless of what the input is. There are no if/then branches that change the execution path. This makes sorting networks perfectly suited for hardware implementation.
-* **Massive parallelism:** Because the comparison paths are predetermined, multiple comparators can operate at the exact same time on different pairs of wires.
-* **Fixed input size:** A specific sorting network is built for a strict, predetermined number of inputs (N). A network built to sort 8 numbers cannot directly sort 9 numbers without being entirely redesigned.
-* **Components:** Sorting networks are constructed using only two components:
-  * **Wires:** These carry the data values from left to right.
-  * **Comparators:** This is a small logic block that connects two wires. It compares the values on both wires and outputs them in sorted order. For an ascending network, the smaller value is routed on the top wire, and the larger value is routed on the bottom wire. If the values are already in the correct order, they pass through unchanged.
+* **Data-Independent Control Flow:** The sequence of comparisons is exactly the same regardless of the input data. There are no conditional branches, making this algorithm perfectly suited for pipelined ASICs and FPGAs.
+* **Massive Parallelism:** Multiple comparators operate simultaneously within the same clock cycle across different pairs of data paths.
+* **RTL Scalability:** While a synthesized bitstream has a fixed hardware size, this SystemVerilog RTL can generate a sorting network for any 2^n inputs without rewriting the underlying logic. 
 
 ## ⚙️ Circuit Architecture
 
-### 1. The Core Module: The Compare & Swap (CAS)
-This is the fundamental building block of your network.
-* **Inputs:** Two N-bit binary numbers (`A` and `B`).
-* **Outputs:** Two N-bit binary lines labeled High and Low.
-* **The Comparator:** Uses magnitude comparator logic from your covered topics to evaluate if `A > B`. This output controls a single control bit (1 or 0).
-* **The Router & Logic:** Connect the output of your comparator to select lines of a 2-mux. If the comparator reads high, the multiplexer routes `A` to the high output and `B` to low. If the comparator reads low, they route `B` to high and `A` to low.
+### 1. The Core Module: Compare & Swap (CAS)
+The fundamental combinational building block of the network.
+* **Inputs:** Two parameterized N-bit binary numbers (`A` and `B`).
+* **Outputs:** Two N-bit binary lines labeled `high` and `low`.
+* **Logic:** Uses continuous assignment to evaluate `A > B`. Based on the boolean result, a multiplexer routes the larger value to `high` and the smaller value to `low`.
 
-### 2. The Top Module: The Sorting Network
-This is where you wire multiple CAS units together. You won't write any new logic gates here; you are simply declaring wires and plugging them into instantiated CAS blocks.
-* **Determine the size:** Pick a fixed number of inputs to sort, such as a 4-input sorting network.
-* **Research the diagram:** Look up a 4-element bitonic sort network.
-* **Instantiate and wire:** For a 4-input network, you will instantiate CAS 5 times (or 6 depending on your specific parallel layout), mapping the output of the first stage into the second stage. *(Note: The code in this repository utilizes a 6-comparator topology arranged in three distinct cross-comparison stages for maximum parallel efficiency).*
+### 2. The Top Module: The Pipelined Network
+This module handles the structural generation and synchronous data movement.
+* **Automatic Scaling:** Calculates the required number of stages using `(M * (M + 1)) / 2` where `M = $clog2(NUM_INPUTS)`.
+* **Pipeline Registers:** Instantiates a 2D array of flip-flops (`pipeline_regs`) to hold data between combinational stages.
+* **Generate Blocks:** Uses recursive `for` loops to instantiate and wire the correct ascending/descending CAS units into the `comb_wires` arrays for each specific stage of the bitonic sequence.
 
 ## 📊 Performance Metrics
-* **Depth (Latency):** This is the maximum number of comparators a single value must pass through from input to output. Depth dictates the total propagation delay.
-* **Size (Area):** This is the total number of comparators in the entire network. Size determines how much silicon area the circuit will consume and how much power it will draw.
+* **Latency (Depth):** Measured in clock cycles. A 4-input network has a 3-cycle latency. An 8-input network has a 6-cycle latency.
+* **Throughput:** 1 fully sorted array per clock cycle (post-latency).
+* **Area (Size):** Scales dynamically. The architecture dictates the exact number of comparators and D-flip-flops synthesized based on the `NUM_INPUTS` parameter.
 
 ## 💡 Applications
-Combinational sorting networks are highly efficient and are primarily applied in:
-1. **Network routers:** For high-speed packet scheduling.
-2. **Graphics processing**.
-3. **Database accelerators**.
+Pipelined sorting networks are highly efficient hardware accelerators primarily applied in:
+1. **Network Routers:** For high-speed packet scheduling and QoS prioritization.
+2. **Digital Signal Processing (DSP):** For non-linear median filtering.
+3. **Database Accelerators:** For rapidly sorting keys in memory arrays.
 
-## 🚀 How to Simulate
-You can run and verify this design using any standard Verilog/SystemVerilog simulator such as **ModelSim**, **Xilinx Vivado**, **Icarus Verilog**, or an online platform like **EDA Playground**.
+## 💻 How to Simulate
+You can run and verify this design using standard SystemVerilog simulators such as **ModelSim**, **Xilinx Vivado**, **Icarus Verilog**, or **EDA Playground**.
 
-1. Create a new project or workspace in your simulator.
+1. Create a new project in your simulator.
 2. Compile both `design.sv` and `testbench.sv`.
-3. Set the top-level module to your testbench.
-4. Run the simulation and generate the waveform. 
-*(Note: You can view the `waveform.pdf` included in this repo to see the verified expected outputs).*
+3. Ensure your simulator is configured to support SystemVerilog-2012 (for `always_ff`, `always_comb`, and multi-dimensional arrays).
+4. Run the simulation. The testbench will generate the clock signal and drive the pipeline automatically.
